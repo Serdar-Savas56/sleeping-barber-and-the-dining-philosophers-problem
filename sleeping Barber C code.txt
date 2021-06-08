@@ -1,0 +1,175 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <pthread.h>
+#include <semaphore.h>
+
+#define CUSTOMER_BOUND 50
+#define TRIMING_TIME 1
+
+sem_t barber; //Berber sırası için kilit tanımlanması
+sem_t customer; // Müşteri sırası için kilit tanımlanması
+sem_t mutex;      //Kritik bölgeler için bir kilide daha ihtiyaç oluyor. müşteri ve berber sectionları
+
+//Foksiyonlar
+void ActiveBarber(void*);
+void ActiveCustomer(void*);
+void CustomerWaiting();
+
+int barberSeatCount = 0;
+int customerCount = 0;
+int customerSeatCount = 0;
+int emptyCustomerSeatCount = 0;
+int servedCustomer = 0;
+int servedCustomerSeat = 0;
+int totalServedCustomer = 0;
+int* barberSeats;
+
+int main(int argc, char** args)
+{
+     //Dışarıdan girilen argüman sayısını kontrol ettiğimiz yer
+	 if(argc != 4)
+	 {
+             
+        printf("\nUsage ERROR! \t Values must be like this: <Number of Customers>");
+	    exit(1);	
+	 }
+	 //kullanıcıdan alınan değerlerin değişkene atanması
+	 customerCount = atoi(args[1]);
+	 customerSeatCount = atoi(args[2]);
+	 barberSeatCount = atoi(args[3]);
+	 emptyCustomerSeatCount = customerSeatCount;
+	 barberSeats = (int*) calloc(customerSeatCount,sizeof(int));
+	 
+	 //Eğer tanımladığımız müşteri sınırından daha fazla müşteri sayısı girilirse
+	 if(customerCount > CUSTOMER_BOUND)
+	 {
+	     printf("\nCustomer Bound: %d \n\n",CUSTOMER_BOUND);
+		 exit(1);
+	  
+	 }
+	 
+	 //Girilen değerlerin ekrana yazdırılması
+	 printf("\n\nEntered customer Count:\t %d",customerCount);
+	 printf("\n\nEntered customer Seat Count:\t %d",customerSeatCount);
+	 printf("\n\nEntered barber Seat Count:\t %d",barberSeatCount);
+	 
+	 
+	 //Threadları tanımladığımız kısım
+	 pthread_t barber[barberSeatCount]; //girilen koltuk sayısı array kullanılarak berber threadi
+	 pthread_t customer[customerCount]; //girilen müşteri sayisi arrayinde müşteri threadi
+	 
+	 //kilitlere başlangiç değerleri atiyoruz
+	 sem_init(&barber,0,0);
+	 sem_init(&customer,0,0);
+	 sem_init(&mutex,0,1);
+	 
+	 //berberlerin çalışmaya başlamasi ile berber threadi başlatılarak activebarber fonks. çalıştırılması
+	 for(int i = 0; i < barberSeatCount; i++)
+	 {
+	     pthread_create(&barber[i], NULL, (void*) ActiveBarber, (void*)&i);
+		 sleep(1);
+	 
+	 }
+	 //müşterilerin gelmeye  başlamasi ile müşteri threadi başlatılarak activecustomer fonks. çalıştırılması
+	 for(int i = 0; i < customerCount; i++)
+	 {
+	     pthread_create(&customer[i], NULL, (void*) ActiveCustomer, (void*)&i);
+		 CustomerWaiting();
+	 
+	 }
+	 //Customer thread'inin  bitirilmesi
+	 for(int i = 0; i < customerCount; i++)
+	 {
+	     pthread_join(customer[i],NULL);
+	 }
+	 printf("Total Served Customers: %d\n",totalServedCustomer);
+	 printf("\n\nBerber kapandi!\n");
+	 
+	 return 0;
+}
+
+void ActiveBarber(void* counter)
+{ 
+    int t = *(int*)counter + 1;
+	int nextCustomer, customerId;
+	
+	printf("\tBerber %d is here.\n",t);
+	
+	while(1)
+	{
+         if(!customerId) //Müşteri yoksa
+         printf("\tberber %d went to sleep.\n",t);
+
+        sem_wait(&barber); //Berber koltukları doluysa dükkandaki müşteriler berber kuyruğunda bekler.
+        sem_wait(&mutex);  //Müşterinin alınması esnasında aynı anda girilmemesi için 
+         
+        //Sıradaki müşteri berber koltuğuna oturduğunda bilgileri güncelleniyor
+         servedCustomer = (++servedCustomer) % customerSeatCount;
+         nextCustomer = servedCustomer;
+         customerId = barberSeats[nextCustomer];
+         barberSeats[nextCustomer] = pthread_self();
+
+        sem_post(&mutex);		 
+        sem_post(&customer);
+		
+		//traş bilgilerinin yazdırılması için
+		printf("berber %d started to shave %d customer's hair \n",t,customerId);
+		sleep(TRIMING_TIME);
+		printf("berber %d finished to shave %d customer's hair \n",t,customerId);
+	 }
+}
+void ActiveCustomer(void* counter)
+{
+    int c = *(int*)counter + 1;
+	int servedSeat,barberId;
+	while(1)
+	{
+	   sem_wait(&mutex); //Aynı anda dükkana müşteri girmesini engellemek için kritik alan oluşturulması
+	   printf("Customer %d came in BerberShop.\n",c);
+	   
+	   if(emptyCustomerSeatCount > 0)
+	   {
+	     emptyCustomerSeatCount--;
+		 printf("Customer %d is waiting.\n",c);
+		 
+		 //Dükkana giren müşterinin beklediği koltuk değerlerinin ayarlanması
+	     servedCustomerSeat = (++servedCustomerSeat) % customerSeatCount;
+		 servedCustomer = servedCustomerSeat;
+		 barberSeats[servedSeat] = c;
+		 
+		 sem_post(&barber); //uyuyan berber varsa uyandırılır.ve traşa başlanılır
+		 sem_post(&mutex);   //Kritik section sona ermiş olur
+		 
+		 
+		 sem_wait(&customer);  //müşteri traş olmak için bekler
+		 sem_wait(&mutex);    //aynı anda traşı olmasını önlemek için
+		 
+		 //Müşteri traş olmaya başladığında dükkandaki koltuk sayısı bir arttırılır.
+		 barberId = barberSeats[servedSeat];
+		 emptyCustomerSeatCount++;
+		 
+		 totalServedCustomer++;
+		 sem_post(&mutex);
+		 }
+		 else //dükkanda boş koltuk yoksa müşteri gider
+		 {
+		   sem_post(&mutex);
+		   printf("BerberShop is full! customer %d is leaving \n\n",c);
+		 
+		 }
+		 pthread_exit(0);
+		 }
+		 
+		}
+		
+//Müşterilerin gelişini simüle etmek için uyutulma fonksiyonu
+void CustomerWaiting()
+{
+   srand((unsigned.int)time(NULL));
+   usleep(rand() % (25000- 50000 + 1) + 50000);
+   
+}
+		   
+		 
+		 
